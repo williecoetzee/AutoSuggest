@@ -18,12 +18,29 @@
  *   http://www.opensource.org/licenses/mit-license.php
  *   http://www.gnu.org/licenses/gpl.html
  */
+ 
+var saved_tids = new Array();
+var new_terms = new Array();
+
+// Another helper function
+function substr_count(string,substring,start,length) {
+ var c = 0;
+ if(start) { string = string.substr(start); }
+ if(length) { string = string.substr(0,length); }
+ for (var i=0;i<string.length;i++)
+ {
+  if(substring == string.substr(i,substring.length))
+  c++;
+ }
+ return c;
+}
+
 
 (function($){
 	$.fn.autoSuggest = function(data, options) {
 		var defaults = { 
 			asHtmlID: false,
-			startText: "Enter Name Here",
+			startText: "",
 			emptyText: "No Results Found",
 			preFill: {},
 			limitText: "No More Selections Are Allowed",
@@ -39,6 +56,7 @@
 			resultsHighlight: true,
 			neverSubmit: false,
 			selectionLimit: false,
+			//~ selectionLimit: 5,
 			showResultList: true,
 		  	start: function(){},
 		  	selectionClick: function(elem){},
@@ -50,7 +68,7 @@
 		  	resultClick: function(data){},
 		  	resultsComplete: function(){}
 	  	};  
-	 	var opts = $.extend(defaults, options);	 	
+	 	var opts = $.extend(defaults, options);
 		
 		var d_type = "object";
 		var d_count = 0;
@@ -84,12 +102,13 @@
 				var values_input = $('<input type="hidden" class="as-values" name="as_values_'+x+'" id="as-values-'+x+'" />');
 				var prefill_value = "";
 				if(typeof opts.preFill == "string"){
-					var vals = opts.preFill.split(",");					
+					var vals = opts.preFill.split(",");
 					for(var i=0; i < vals.length; i++){
 						var v_data = {};
 						v_data[opts.selectedValuesProp] = vals[i];
+						v_data[opts.selectedItemProp] = vals[i]; //I added this...bug fix
 						if(vals[i] != ""){
-							add_selected_item(v_data, "000"+i);	
+							add_selected_item(v_data, "000"+i);
 						}		
 					}
 					prefill_value = opts.preFill;
@@ -103,7 +122,7 @@
 							if(new_v == undefined){ new_v = ""; }
 							prefill_value = prefill_value+new_v+",";
 							if(new_v != ""){
-								add_selected_item(opts.preFill[i], "000"+i);	
+								add_selected_item(opts.preFill[i], "000"+i);
 							}		
 						}
 					}
@@ -119,7 +138,7 @@
 				selections_holder.click(function(){
 					input_focus = true;
 					input.focus();
-				}).mousedown(function(){ input_focus = false; }).after(results_holder);	
+				}).mousedown(function(){ input_focus = false; }).after(results_holder);
 
 				var timeout = null;
 				var prev = "";
@@ -127,7 +146,9 @@
 				var tab_press = false;
 				
 				// Handle input field events
-				input.focus(function(){			
+				input.focus(function(){
+					this_vid = $(this).parent().parent().parent().parent().parent().find('.this-vid input[type=hidden]').val();
+					req_string = Drupal.settings.basePath + 'autocomplete_dropbox.json?vid='+this_vid;
 					if($(this).val() == opts.startText && values_input.val() == ""){
 						$(this).val("");
 					} else if(input_focus){
@@ -145,7 +166,7 @@
 					} else if(input_focus){
 						$("li.as-selection-item", selections_holder).addClass("blur").removeClass("selected");
 						results_holder.hide();
-					}				
+					}
 				}).keydown(function(e) {
 					// track last key pressed
 					lastKeyPressCode = e.keyCode;
@@ -160,7 +181,7 @@
 							moveSelection("down");
 							break;
 						case 8:  // delete
-							if(input.val() == ""){							
+							if(input.val() == ""){
 								var last = values_input.val().split(",");
 								last = last[last.length - 2];
 								selections_holder.children().not(org_li.prev()).removeClass("selected");
@@ -181,24 +202,39 @@
 								timeout = setTimeout(function(){ keyChange(); }, opts.keyDelay);
 							}
 							break;
-						case 9: case 188:  // tab or comma
+						case 9: case 188: //case 13:  // tab or comma or enter
 							tab_press = true;
 							var i_input = input.val().replace(/(,)/g, "");
-							if(i_input != "" && values_input.val().search(","+i_input+",") < 0 && i_input.length >= opts.minChars){	
+							if(i_input != "" && values_input.val().search(","+i_input+",") < 0 && i_input.length >= opts.minChars){
 								e.preventDefault();
 								var n_data = {};
 								n_data[opts.selectedItemProp] = i_input;
-								n_data[opts.selectedValuesProp] = i_input;																				
+								n_data[opts.selectedValuesProp] = i_input;
 								var lis = $("li", selections_holder).length;
 								add_selected_item(n_data, "00"+(lis+1));
 								input.val("");
 							}
+							break;
 						case 13: // return
 							tab_press = false;
 							var active = $("li.active:first", results_holder);
+							
 							if(active.length > 0){
 								active.click();
 								results_holder.hide();
+							}
+							else { //If this is a new term and enter is pressed
+								tab_press = true;
+								var i_input = input.val().replace(/(,)/g, "");
+								if(i_input != "" && values_input.val().search(","+i_input+",") < 0 && i_input.length >= opts.minChars){
+									e.preventDefault();
+									var n_data = {};
+									n_data[opts.selectedItemProp] = i_input;
+									n_data[opts.selectedValuesProp] = i_input;
+									var lis = $("li", selections_holder).length;
+									add_selected_item(n_data, "00"+(lis+1));
+									input.val("");
+								}
 							}
 							if(opts.neverSubmit || active.length > 0){
 								e.preventDefault();
@@ -234,7 +270,7 @@
 							if(opts.beforeRetrieve){
 								string = opts.beforeRetrieve.call(this, string);
 							}
-							$.getJSON(req_string+"?"+opts.queryParam+"="+encodeURIComponent(string)+limit+opts.extraParams, function(data){ 
+							$.getJSON(req_string+"&"+opts.queryParam+"="+encodeURIComponent(string)+limit+opts.extraParams, function(data){ //Changed this...
 								d_count = 0;
 								var new_data = opts.retrieveComplete.call(this, data);
 								for (k in new_data) if (new_data.hasOwnProperty(k)) d_count++;
@@ -256,7 +292,7 @@
 					if (!opts.matchCase){ query = query.toLowerCase(); }
 					var matchCount = 0;
 					results_holder.html(results_ul.html("")).hide();
-					for(var i=0;i<d_count;i++){				
+					for(var i=0;i<d_count;i++){	
 						var num = i;
 						num_count++;
 						var forward = false;
@@ -324,13 +360,86 @@
 				}
 				
 				function add_selected_item(data, num){
+					// Add some custom code to complete the hidden fields
+					thisDropbox = values_input.parent().parent().parent().parent().parent();
+
+					if (data['tid']) {
+						thisDropbox.find('.saved-tids input[type=hidden]').val(thisDropbox.find('.saved-tids input[type=hidden]').val() + data['tid'] + ',');
+					} else {
+						thisDropbox.find('.new-terms input[type=hidden]').val(thisDropbox.find('.new-terms input[type=hidden]').val() + data['name'] + ',');
+					}
+					//End custom code
 					values_input.val(values_input.val()+data[opts.selectedValuesProp]+",");
-					var item = $('<li class="as-selection-item" id="as-selection-'+num+'"></li>').click(function(){
+					var countTermsEntered = $("li.as-selection-item", selections_holder).length; //Custom
+					if((opts.selectionLimit == false) || (countTermsEntered <= opts.selectionLimit-1)) { //Custom
+						var item = $('<li class="as-selection-item" id="as-selection-'+num+'"></li>').click(function(){
 							opts.selectionClick.call(this, $(this));
 							selections_holder.children().removeClass("selected");
 							$(this).addClass("selected");
 						}).mousedown(function(){ input_focus = false; });
+					} //Custom
 					var close = $('<a class="as-close">&times;</a>').click(function(){
+							//When a term is removed - some more custom code...
+							if(data['tid']) {
+								//First read the terms into an array
+								var comma_list  = $(this).parent().parent().parent().parent().parent().find('.saved-tids input[type=hidden]').val();
+								var count_tids = substr_count(comma_list, ',');
+								var outputArr =  new Array();
+	
+								for (var k = 0; k < count_tids; k++) {
+									pos = comma_list.indexOf(',');
+									tid = comma_list.substr(0, pos);
+									comma_list = comma_list.substr(pos+1);
+									outputArr.push(tid);
+								}
+								
+								$(this).parent().parent().parent().parent().parent().find('.saved-tids input[type=hidden]').val('');
+								for ( i=0; i < outputArr.length; i++ ) {
+									if (outputArr[i] == data['tid']) {
+										//The array.remove function gives problems so we are using this for now
+										var rest = outputArr.slice(i+1);
+										outputArr.length = i;
+										outputArr = outputArr.concat(rest);
+										//Until here
+									}
+								}
+								//now update the hidden field
+								for ( i=0; i < outputArr.length; i++ ) {
+									$(this).parent().parent().parent().parent().parent().find('.saved-tids input[type=hidden]').val($(this).parent().parent().parent().parent().parent().find('.saved-tids input[type=hidden]').val() + outputArr[i] + ',');
+								}
+							}
+							else {
+								//Get the comma separated list from the textbox, put it in an arry, remove the element from the array and then write back the array values to the textbox
+								var comma_list  = $(this).parent().parent().parent().parent().parent().find('.new-terms input[type=hidden]').val();
+								var count_terms = substr_count(comma_list, ',');
+								var outputArr =  new Array();
+	
+								for (var k = 0; k < count_terms; k++) {
+									pos = comma_list.indexOf(',');
+									term = comma_list.substr(0, pos);
+									comma_list = comma_list.substr(pos+1);
+									outputArr.push(term);
+								}
+								
+								$(this).parent().parent().parent().parent().parent().find('.new-terms input[type=hidden]').val('');
+								//Remove the element from the new terms array
+								for ( i=0; i < outputArr.length; i++ ) {
+									if (outputArr[i] == data['name']) {
+										//Now we remove the term from the array
+										var rest = outputArr.slice(i+1);
+										outputArr.length = i;
+										outputArr = outputArr.concat(rest);
+										//until here
+									}
+								}
+								
+								//now update the hidden field
+								for ( i=0; i < outputArr.length; i++ ) {
+									$(this).parent().parent().parent().parent().parent().find('.new-terms input[type=hidden]').val($(this).parent().parent().parent().parent().parent().find('.new-terms input[type=hidden]').val() + outputArr[i] + ',');
+								}
+							}
+							
+							//End Custom Code
 							values_input.val(values_input.val().replace(","+data[opts.selectedValuesProp]+",",","));
 							opts.selectionRemoved.call(this, item);
 							input_focus = true;
@@ -348,7 +457,7 @@
 							var start = lis.eq(0);
 						} else {
 							var start = lis.filter(":last");
-						}					
+						}
 						var active = $("li.active:first", results_holder);
 						if(active.length > 0){
 							if(direction == "down"){
@@ -361,8 +470,9 @@
 						start.addClass("active");
 					}
 				}
-									
 			});
 		}
 	}
-})(jQuery);  	
+})(jQuery);
+
+
